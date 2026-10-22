@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: access-workflow
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:15432/access_portal}
+    username: ${DB_USERNAME:access_portal}
+    password: ${DB_PASSWORD:local-development-only}
+  flyway:
+    enabled: true
+server:
+  port: ${PORT:8080}
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${COOKIE_SECURE:false}
+  error:
+    include-message: never
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    csrf:
+      enabled: true
+      cookie-name: XSRF-TOKEN
+      header-name: X-XSRF-TOKEN

@@ -1,0 +1,2223 @@
+{
+  "info": {
+    "_postman_id": "c4da2aa4-187c-49c8-a46c-335dc668dc9a",
+    "name": "AccessHub - Workflow Tests",
+    "description": "Run all folders in order with the AccessHub Local environment. Covers approval, return/resubmission, rejection, validation, CSRF, login/logout, and access control. Automatically switches demo accounts using explicit login requests and refreshes CSRF before each write. Creates three real requests and ends them approved/rejected. Re-running creates new records; existing requests are never deleted. Requires the dev profile and seeded demo accounts. Keep Postman cookie handling enabled.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "requestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "rejectedRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "securityRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "applicationId",
+      "value": "00000000-0000-0000-0000-000000000101",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Spring Security rotates CSRF tokens on authentication. Fetch the current",
+          "// token immediately before every write, retaining Postman's session cookies.",
+          "const baseUrl = pm.variables.get('baseUrl');",
+          "if (!baseUrl || !/^https?:\\/\\//.test(baseUrl)) {",
+          "  throw new Error('Select the AccessHub Local environment and set baseUrl.');",
+          "}",
+          "if (!['GET', 'HEAD', 'OPTIONS'].includes(pm.request.method)) {",
+          "  pm.request.headers.remove('X-XSRF-TOKEN');",
+          "  if (!pm.info.requestName.startsWith('[NO CSRF]')) {",
+          "    pm.sendRequest(baseUrl.replace(/\\/$/, '') + '/api/auth/csrf', function (error, response) {",
+          "      if (error || response.code !== 200) {",
+          "        throw new Error('Unable to fetch CSRF token. Check baseUrl and start the API.');",
+          "      }",
+          "      const csrf = response.json();",
+          "      if (!csrf.token || !csrf.headerName) throw new Error('Invalid CSRF response.');",
+          "      pm.request.headers.upsert({ key: csrf.headerName, value: csrf.token });",
+          "    });",
+          "  }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Approval and information round-trip",
+      "description": "Employee -> manager -> owner -> employee response -> owner -> security -> approved.",
+      "item": [
+        {
+          "name": "Reset run state and get CSRF token",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/csrf",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "['requestId', 'rejectedRequestId', 'securityRequestId', 'employeeId', 'managerId', 'ownerId', 'securityId'].forEach(key => pm.collectionVariables.unset(key));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{employeeEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{employeePassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify employee account",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Correct account and role', () => {",
+                  "  const user = pm.response.json();",
+                  "  pm.expect(user.email).to.equal(pm.variables.get('employeeEmail'));",
+                  "  pm.expect(user.role).to.equal('EMPLOYEE');",
+                  "  pm.collectionVariables.set('employeeId', user.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Select Salesforce from application catalog",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/applications",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Seeded application is available', () => {",
+                  "  const app = pm.response.json().find(item => item.name === 'Salesforce');",
+                  "  pm.expect(app, 'Enable the dev profile to seed Salesforce and demo accounts').to.exist;",
+                  "  pm.collectionVariables.set('applicationId', app.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (requestId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"applicationId\": \"{{applicationId}}\",\n  \"accessLevel\": \"STANDARD\",\n  \"justification\": \"Postman workflow check: access needed to manage enterprise customer accounts.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('requestId', pm.response.json().request.id);",
+                  "}",
+                  "",
+                  "pm.test('Request starts with the line manager', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.id).to.match(/^[0-9a-f-]{36}$/);",
+                  "  pm.expect(body.request.reference).to.match(/^AR-\\d+$/);",
+                  "  pm.expect(body.request.status).to.equal('PENDING');",
+                  "  pm.expect(body.request.stage).to.equal('LINE_MANAGER');",
+                  "  pm.expect(body.request.currentOwnerId).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.history.map(h => h.action)).to.eql(['SUBMITTED']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Requester cannot approve their own request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"comment\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as manager",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{managerEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{managerPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify manager account",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Correct account and role', () => {",
+                  "  const user = pm.response.json();",
+                  "  pm.expect(user.email).to.equal(pm.variables.get('managerEmail'));",
+                  "  pm.expect(user.role).to.equal('MANAGER');",
+                  "  pm.collectionVariables.set('managerId', user.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pending approvals include this request",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests?scope=pending",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Request is assigned to the signed-in approver', () => {",
+                  "  const items = pm.response.json();",
+                  "  pm.expect(items).to.be.an('array');",
+                  "  pm.expect(items.some(item => item.id === pm.collectionVariables.get('requestId'))).to.equal(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Manager approves",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"comment\": \"Business need confirmed.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('PENDING');",
+                  "  pm.expect(body.request.stage).to.equal('APPLICATION_OWNER');",
+                  "  ",
+                  "  ",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\",\"APPROVE\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as owner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{ownerEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{ownerPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify owner account",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Correct account and role', () => {",
+                  "  const user = pm.response.json();",
+                  "  pm.expect(user.email).to.equal(pm.variables.get('ownerEmail'));",
+                  "  pm.expect(user.role).to.equal('APPLICATION_OWNER');",
+                  "  pm.collectionVariables.set('ownerId', user.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pending approvals include this request",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests?scope=pending",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Request is assigned to the signed-in approver', () => {",
+                  "  const items = pm.response.json();",
+                  "  pm.expect(items).to.be.an('array');",
+                  "  pm.expect(items.some(item => item.id === pm.collectionVariables.get('requestId'))).to.equal(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Application owner asks for information",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"RETURN\",\n  \"comment\": \"Which customer accounts will you manage?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('NEEDS_INFORMATION');",
+                  "  pm.expect(body.request.stage).to.equal('APPLICATION_OWNER');",
+                  "  pm.expect(body.request.currentOwnerId).to.equal(pm.collectionVariables.get('employeeId'));",
+                  "  ",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\",\"APPROVE\",\"RETURN\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{employeeEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{employeePassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Requester sees returned request in My requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests?scope=mine",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returned request is visible to its requester', () => {",
+                  "  const item = pm.response.json().find(item => item.id === pm.collectionVariables.get('requestId'));",
+                  "  pm.expect(item).to.exist;",
+                  "  pm.expect(item.status).to.equal('NEEDS_INFORMATION');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Requester cannot skip the information response",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"comment\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Requester responds and resumes the same stage",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"RESUBMIT\",\n  \"comment\": \"I manage the Cairo enterprise accounts for the commercial sales team.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('PENDING');",
+                  "  pm.expect(body.request.stage).to.equal('APPLICATION_OWNER');",
+                  "  pm.expect(body.request.currentOwnerId).to.equal(pm.collectionVariables.get('ownerId'));",
+                  "  ",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\",\"APPROVE\",\"RETURN\",\"RESUBMIT\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as owner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{ownerEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{ownerPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pending approvals include this request",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests?scope=pending",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Request is assigned to the signed-in approver', () => {",
+                  "  const items = pm.response.json();",
+                  "  pm.expect(items).to.be.an('array');",
+                  "  pm.expect(items.some(item => item.id === pm.collectionVariables.get('requestId'))).to.equal(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Application owner approves",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"comment\": \"Standard access is appropriate.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('PENDING');",
+                  "  pm.expect(body.request.stage).to.equal('SECURITY');",
+                  "  ",
+                  "  ",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\",\"APPROVE\",\"RETURN\",\"RESUBMIT\",\"APPROVE\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as security",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{securityEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{securityPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify security account",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Correct account and role', () => {",
+                  "  const user = pm.response.json();",
+                  "  pm.expect(user.email).to.equal(pm.variables.get('securityEmail'));",
+                  "  pm.expect(user.role).to.equal('SECURITY');",
+                  "  pm.collectionVariables.set('securityId', user.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pending approvals include this request",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests?scope=pending",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Request is assigned to the signed-in approver', () => {",
+                  "  const items = pm.response.json();",
+                  "  pm.expect(items).to.be.an('array');",
+                  "  pm.expect(items.some(item => item.id === pm.collectionVariables.get('requestId'))).to.equal(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Security approves the final stage",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"comment\": \"Security checks passed.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('APPROVED');",
+                  "  pm.expect(body.request.stage).to.equal('COMPLETED');",
+                  "  ",
+                  "  pm.expect(body.request.currentOwnerId).to.equal(null);",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\",\"APPROVE\",\"RETURN\",\"RESUBMIT\",\"APPROVE\",\"APPROVE\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{employeeEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{employeePassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Requester verifies final status and full audit trail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('APPROVED');",
+                  "  pm.expect(body.request.stage).to.equal('COMPLETED');",
+                  "  ",
+                  "  pm.expect(body.request.currentOwnerId).to.equal(null);",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\",\"APPROVE\",\"RETURN\",\"RESUBMIT\",\"APPROVE\",\"APPROVE\"]);",
+                  "});",
+                  "pm.test('All information exchange comments are retained', () => {",
+                  "  const history = pm.response.json().history;",
+                  "  pm.expect(history[2].comment).to.equal('Which customer accounts will you manage?');",
+                  "  pm.expect(history[3].comment).to.include('Cairo enterprise accounts');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Rejection and terminal-state protection",
+      "description": "Independent request rejected by its manager. Comment validation must leave the original state intact.",
+      "item": [
+        {
+          "name": "Sign in as employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{employeeEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{employeePassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (rejectedRequestId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"applicationId\": \"{{applicationId}}\",\n  \"accessLevel\": \"STANDARD\",\n  \"justification\": \"Postman workflow check: access needed to manage enterprise customer accounts.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('rejectedRequestId', pm.response.json().request.id);",
+                  "}",
+                  "",
+                  "pm.test('Request starts with the line manager', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.id).to.match(/^[0-9a-f-]{36}$/);",
+                  "  pm.expect(body.request.reference).to.match(/^AR-\\d+$/);",
+                  "  pm.expect(body.request.status).to.equal('PENDING');",
+                  "  pm.expect(body.request.stage).to.equal('LINE_MANAGER');",
+                  "  pm.expect(body.request.currentOwnerId).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.history.map(h => h.action)).to.eql(['SUBMITTED']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as manager",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{managerEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{managerPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rejection requires a comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{rejectedRequestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"REJECT\",\n  \"comment\": \" \"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid rejection leaves state and history unchanged",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{rejectedRequestId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('PENDING');",
+                  "  pm.expect(body.request.stage).to.equal('LINE_MANAGER');",
+                  "  pm.expect(body.request.currentOwnerId).to.equal(pm.collectionVariables.get('managerId'));",
+                  "  ",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Manager rejects with a reason",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{rejectedRequestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"REJECT\",\n  \"comment\": \"Access is outside current job responsibilities.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('REJECTED');",
+                  "  pm.expect(body.request.stage).to.equal('COMPLETED');",
+                  "  ",
+                  "  pm.expect(body.request.currentOwnerId).to.equal(null);",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\",\"REJECT\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Completed request cannot be acted on again",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{rejectedRequestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"comment\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{employeeEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{employeePassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Requester can read the rejected request",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{rejectedRequestId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('REJECTED');",
+                  "  pm.expect(body.request.stage).to.equal('COMPLETED');",
+                  "  ",
+                  "  pm.expect(body.request.currentOwnerId).to.equal(null);",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\",\"REJECT\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Authentication, validation, and authorization",
+      "description": "Expected 4xx responses are successful tests. A new fixture verifies that reviewers cannot act ahead of their stage.",
+      "item": [
+        {
+          "name": "Logout before unauthenticated checks",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/logout",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Protected endpoint rejects an unauthenticated client",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as employee with invalid password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{employeeEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "deliberately-invalid-password",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{employeeEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{employeePassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[NO CSRF] Missing header is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"applicationId\": \"{{applicationId}}\",\n  \"accessLevel\": \"STANDARD\",\n  \"justification\": \"Postman workflow check: access needed to manage enterprise customer accounts.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Missing required fields are rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown access level is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"applicationId\": \"{{applicationId}}\",\n  \"accessLevel\": \"SUPERUSER\",\n  \"justification\": \"Postman workflow check: access needed to manage enterprise customer accounts.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Whitespace cannot satisfy business justification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"applicationId\": \"{{applicationId}}\",\n  \"accessLevel\": \"STANDARD\",\n  \"justification\": \"   x                         \"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown application cannot create a workflow",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"applicationId\": \"ffffffff-ffff-4fff-8fff-ffffffffffff\",\n  \"accessLevel\": \"STANDARD\",\n  \"justification\": \"Postman workflow check: access needed to manage enterprise customer accounts.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown list scope is rejected",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests?scope=all",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Malformed request ID is rejected",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/not-a-uuid",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown request ID returns not found",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/ffffffff-ffff-4fff-8fff-ffffffffffff",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (securityRequestId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"applicationId\": \"{{applicationId}}\",\n  \"accessLevel\": \"STANDARD\",\n  \"justification\": \"Postman workflow check: access needed to manage enterprise customer accounts.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('securityRequestId', pm.response.json().request.id);",
+                  "}",
+                  "",
+                  "pm.test('Request starts with the line manager', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.id).to.match(/^[0-9a-f-]{36}$/);",
+                  "  pm.expect(body.request.reference).to.match(/^AR-\\d+$/);",
+                  "  pm.expect(body.request.status).to.equal('PENDING');",
+                  "  pm.expect(body.request.stage).to.equal('LINE_MANAGER');",
+                  "  pm.expect(body.request.currentOwnerId).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.history.map(h => h.action)).to.eql(['SUBMITTED']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as security",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{securityEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{securityPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Future reviewer cannot see an unrelated active request",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{securityRequestId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Future reviewer cannot skip approval stages",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{securityRequestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"comment\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign in as manager",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "URL-encoded Spring Security login. The collection fetches CSRF automatically. Session cookies stay in the Postman cookie jar.",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{managerEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{managerPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Finish the authorization fixture by rejecting it",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{securityRequestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"REJECT\",\n  \"comment\": \"Postman authorization check complete; no access should be granted.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Workflow status and stage are correct', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.status).to.equal('REJECTED');",
+                  "  pm.expect(body.request.stage).to.equal('COMPLETED');",
+                  "  ",
+                  "  pm.expect(body.request.currentOwnerId).to.equal(null);",
+                  "});",
+                  "pm.test('Audit history records exactly the expected actions', () => {",
+                  "  pm.expect(pm.response.json().history.map(entry => entry.action)).to.eql([\"SUBMITTED\",\"REJECT\"]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout invalidates the session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/logout",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Session is no longer authenticated",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Error includes a useful message', () => {",
+                  "  pm.expect(pm.response.json().message).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

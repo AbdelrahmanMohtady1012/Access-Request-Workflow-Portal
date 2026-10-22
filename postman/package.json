@@ -1,0 +1,13 @@
+{
+  "name": "accesshub-api-checks",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Postman collections and repeatable workflow checks for AccessHub",
+  "scripts": {
+    "generate": "node generate-collections.mjs",
+    "test": "newman run AccessHub.WorkflowTests.postman_collection.json -e AccessHub.Local.postman_environment.json --bail --timeout-request 10000 --timeout-script 10000"
+  },
+  "devDependencies": {
+    "newman": "6.2.1"
+  }
+}

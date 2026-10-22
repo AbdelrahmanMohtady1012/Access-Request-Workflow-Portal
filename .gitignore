@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+.env
+.tools/
+*.log
+.idea/
+playwright-report/
+test-results/
+*.tsbuildinfo
+postman/reports/

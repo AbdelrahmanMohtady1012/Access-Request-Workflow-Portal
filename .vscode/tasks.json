@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "Database: start", "type": "shell", "command": "docker compose up -d db", "problemMatcher": [] },
+    { "label": "Frontend: install", "type": "shell", "command": "npm install", "options": { "cwd": "${workspaceFolder}/frontend" }, "problemMatcher": [] },
+    { "label": "Frontend: dev", "type": "shell", "command": "npm run dev", "options": { "cwd": "${workspaceFolder}/frontend" }, "problemMatcher": [] },
+    { "label": "Backend: dev", "type": "shell", "command": "./mvnw spring-boot:run -Dspring-boot.run.profiles=dev", "windows": { "command": ".\\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=dev" }, "options": { "cwd": "${workspaceFolder}/backend" }, "problemMatcher": [] },
+    { "label": "Backend: tests", "type": "shell", "command": "./mvnw test", "windows": { "command": ".\\mvnw.cmd test" }, "options": { "cwd": "${workspaceFolder}/backend" }, "problemMatcher": [] }
+  ]
+}

@@ -1,0 +1,514 @@
+{
+  "info": {
+    "_postman_id": "293a91d6-8aad-4ab8-b73d-719771c76aec",
+    "name": "AccessHub - API Reference",
+    "description": "Manual API requests for the Access Request Workflow Portal. Select AccessHub Local. Sign in, list applications, create a request, and use the returned requestId. For automated execution use the separate Workflow Tests collection. This API uses session cookies and CSRF, not bearer tokens. Every write automatically obtains a fresh CSRF token.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "requestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "rejectedRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "securityRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "applicationId",
+      "value": "00000000-0000-0000-0000-000000000101",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Spring Security rotates CSRF tokens on authentication. Fetch the current",
+          "// token immediately before every write, retaining Postman's session cookies.",
+          "const baseUrl = pm.variables.get('baseUrl');",
+          "if (!baseUrl || !/^https?:\\/\\//.test(baseUrl)) {",
+          "  throw new Error('Select the AccessHub Local environment and set baseUrl.');",
+          "}",
+          "if (!['GET', 'HEAD', 'OPTIONS'].includes(pm.request.method)) {",
+          "  pm.request.headers.remove('X-XSRF-TOKEN');",
+          "  if (!pm.info.requestName.startsWith('[NO CSRF]')) {",
+          "    pm.sendRequest(baseUrl.replace(/\\/$/, '') + '/api/auth/csrf', function (error, response) {",
+          "      if (error || response.code !== 200) {",
+          "        throw new Error('Unable to fetch CSRF token. Check baseUrl and start the API.');",
+          "      }",
+          "      const csrf = response.json();",
+          "      if (!csrf.token || !csrf.headerName) throw new Error('Invalid CSRF response.');",
+          "      pm.request.headers.upsert({ key: csrf.headerName, value: csrf.token });",
+          "    });",
+          "  }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Authentication",
+      "description": "Set loginEmail/loginPassword to choose an account. Cookies are retained automatically. Run logout when finished.",
+      "item": [
+        {
+          "name": "Get CSRF token",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/csrf",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('CSRF token and header name are present', () => {",
+                  "  pm.expect(pm.response.json().token).to.be.a('string').and.not.empty;",
+                  "  pm.expect(pm.response.json().headerName).to.equal('X-XSRF-TOKEN');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
+            "description": "",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{loginEmail}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{loginPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Authentication succeeded', () => pm.expect(pm.response.json().authenticated).to.equal(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Current account",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/me",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/logout",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Applications",
+      "description": "Available internal applications and their IDs.",
+      "item": [
+        {
+          "name": "List applications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/applications",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Application catalog returned', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "const apps = pm.response.json();",
+                  "if (apps.length) pm.collectionVariables.set('applicationId', (apps.find(app => app.name === 'Salesforce') || apps[0]).id);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Access requests",
+      "description": "Create as employee. Creating a request saves requestId for details and actions.",
+      "item": [
+        {
+          "name": "My submitted requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests?scope=mine",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My pending approvals",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests?scope=pending",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create request (requestId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"applicationId\": \"{{applicationId}}\",\n  \"accessLevel\": \"STANDARD\",\n  \"justification\": \"Postman workflow check: access needed to manage enterprise customer accounts.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('requestId', pm.response.json().request.id);",
+                  "}",
+                  "",
+                  "pm.test('Request starts with the line manager', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.request.id).to.match(/^[0-9a-f-]{36}$/);",
+                  "  pm.expect(body.request.reference).to.match(/^AR-\\d+$/);",
+                  "  pm.expect(body.request.status).to.equal('PENDING');",
+                  "  pm.expect(body.request.stage).to.equal('LINE_MANAGER');",
+                  "  pm.expect(body.request.currentOwnerId).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.history.map(h => h.action)).to.eql(['SUBMITTED']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Request details and audit history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 Workflow actions",
+      "description": "These are alternative actions, not a sequential test. Sign in as the current owner and select the action matching the request state.",
+      "item": [
+        {
+          "name": "Approve current stage",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"comment\": \"Business need confirmed.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Return for information",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"RETURN\",\n  \"comment\": \"Which customer accounts will you manage?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Respond and resubmit as requester",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"RESUBMIT\",\n  \"comment\": \"I manage the Cairo enterprise accounts.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests/{{requestId}}/actions",
+            "description": "Only the current owner can act. REJECT, RETURN, and RESUBMIT require a nonblank comment.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"REJECT\",\n  \"comment\": \"The requested access is outside current job responsibilities.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
